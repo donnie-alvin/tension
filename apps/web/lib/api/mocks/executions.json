@@ -1,0 +1,25 @@
+[
+  {
+    "id": "execution-alpha-1",
+    "projectId": "project-alpha",
+    "title": "Generate launch checklist tickets",
+    "phase": "Verification",
+    "state": "Running",
+    "summary": "Traycer is validating generated implementation tasks against onboarding requirements.",
+    "startedAt": "2026-05-11T15:35:00.000Z",
+    "createdAt": "2026-05-11T15:34:00.000Z",
+    "updatedAt": "2026-05-11T15:45:00.000Z"
+  },
+  {
+    "id": "execution-beta-1",
+    "projectId": "project-beta",
+    "title": "Draft billing health implementation plan",
+    "phase": "Complete",
+    "state": "Succeeded",
+    "summary": "Generated the initial spec and first ticket set for billing health signal handling.",
+    "startedAt": "2026-05-08T11:20:00.000Z",
+    "completedAt": "2026-05-08T11:48:00.000Z",
+    "createdAt": "2026-05-08T11:18:00.000Z",
+    "updatedAt": "2026-05-08T11:48:00.000Z"
+  }
+]

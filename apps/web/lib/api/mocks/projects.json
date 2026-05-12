@@ -1,0 +1,29 @@
+[
+  {
+    "id": "project-alpha",
+    "name": "Atlas Onboarding",
+    "description": "A customer onboarding workspace for consolidating activation flows, implementation milestones, and launch readiness artifacts.",
+    "status": "Active",
+    "createdAt": "2026-04-02T09:30:00.000Z",
+    "updatedAt": "2026-05-11T15:45:00.000Z",
+    "artifactCount": 5
+  },
+  {
+    "id": "project-beta",
+    "name": "Billing Intelligence",
+    "description": "Internal billing analytics surface for payment health, revenue changes, and account-level financial reviews.",
+    "status": "Draft",
+    "createdAt": "2026-04-14T11:00:00.000Z",
+    "updatedAt": "2026-05-09T10:20:00.000Z",
+    "artifactCount": 2
+  },
+  {
+    "id": "project-archive",
+    "name": "Legacy Portal Migration",
+    "description": "Archived migration planning and execution history for the retired customer portal.",
+    "status": "Archived",
+    "createdAt": "2026-02-18T14:15:00.000Z",
+    "updatedAt": "2026-04-28T08:10:00.000Z",
+    "artifactCount": 4
+  }
+]

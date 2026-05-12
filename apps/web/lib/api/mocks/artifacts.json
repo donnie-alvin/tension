@@ -1,0 +1,88 @@
+{
+  "specs": [
+    {
+      "id": "spec-onboarding-flow",
+      "projectId": "project-alpha",
+      "title": "Onboarding Flow Architecture",
+      "content": "# Onboarding Flow Architecture\n\nThe onboarding workspace coordinates activation status, implementation tasks, and account metadata in one operational view.\n\n## Goals\n\n- Reduce handoff time between sales and implementation.\n- Track launch blockers with explicit ownership.\n- Keep artifact history visible from the project page.\n\n## Data Model\n\nEach project owns specs, tickets, and executions. Tickets can reference a spec when they are generated from a planning pass.",
+      "kind": "Spec",
+      "createdAt": "2026-04-03T10:30:00.000Z",
+      "updatedAt": "2026-05-10T16:20:00.000Z"
+    },
+    {
+      "id": "spec-billing-health",
+      "projectId": "project-beta",
+      "title": "Billing Health Signals",
+      "content": "# Billing Health Signals\n\nBilling health should highlight accounts with failed payments, unusual revenue movement, and upcoming renewal risk.\n\n| Signal | Severity | Owner |\n| --- | --- | --- |\n| Failed payment streak | High | Finance Ops |\n| Contract downgrade | Medium | Account Team |\n| Incomplete invoice metadata | Low | Support Ops |\n\n```ts\nexport type BillingSignal = 'failed-payment' | 'downgrade' | 'metadata-gap'\n```",
+      "kind": "Spec",
+      "createdAt": "2026-04-16T09:15:00.000Z",
+      "updatedAt": "2026-05-08T12:00:00.000Z"
+    }
+  ],
+  "tickets": [
+    {
+      "id": "ticket-auth-handoff",
+      "projectId": "project-alpha",
+      "specId": "spec-onboarding-flow",
+      "title": "Build secure handoff checklist",
+      "description": "Create the checklist component used by implementation managers during the customer handoff.\n\nAcceptance criteria:\n\n- Display required activation steps.\n- Persist checked items per project.\n- Surface incomplete required items before launch.",
+      "status": "InProgress",
+      "kind": "Ticket",
+      "assigneeId": "user-1",
+      "assigneeName": "Maya Singh",
+      "createdAt": "2026-04-04T12:00:00.000Z",
+      "updatedAt": "2026-05-11T11:45:00.000Z"
+    },
+    {
+      "id": "ticket-launch-readiness",
+      "projectId": "project-alpha",
+      "specId": "spec-onboarding-flow",
+      "title": "Add launch readiness summary",
+      "description": "Add a compact readiness summary that groups open blockers by owner and priority.\n\nThe summary should be visible on the project detail page and link to the filtered ticket list.",
+      "status": "Todo",
+      "kind": "Ticket",
+      "assigneeId": "user-2",
+      "assigneeName": "Jordan Lee",
+      "createdAt": "2026-04-07T13:30:00.000Z",
+      "updatedAt": "2026-05-10T09:10:00.000Z"
+    },
+    {
+      "id": "ticket-activity-stream",
+      "projectId": "project-alpha",
+      "specId": "spec-onboarding-flow",
+      "title": "Implement activity stream empty states",
+      "description": "Create clear empty and loading states for the activity stream so new projects do not look broken before their first execution.",
+      "status": "Done",
+      "kind": "Ticket",
+      "assigneeId": "user-3",
+      "assigneeName": "Avery Chen",
+      "createdAt": "2026-04-09T15:00:00.000Z",
+      "updatedAt": "2026-05-06T17:25:00.000Z"
+    },
+    {
+      "id": "ticket-billing-signals",
+      "projectId": "project-beta",
+      "specId": "spec-billing-health",
+      "title": "Model billing signal severity",
+      "description": "Create the frontend types and visual treatment for high, medium, and low billing health signals.",
+      "status": "Todo",
+      "kind": "Ticket",
+      "assigneeId": "user-1",
+      "assigneeName": "Maya Singh",
+      "createdAt": "2026-04-17T10:45:00.000Z",
+      "updatedAt": "2026-05-08T12:30:00.000Z"
+    },
+    {
+      "id": "ticket-archive-notes",
+      "projectId": "project-archive",
+      "title": "Preserve migration decision notes",
+      "description": "Render archived decision notes in read-only mode and keep links to historical executions available.",
+      "status": "Done",
+      "kind": "Ticket",
+      "assigneeId": "user-2",
+      "assigneeName": "Jordan Lee",
+      "createdAt": "2026-02-20T10:00:00.000Z",
+      "updatedAt": "2026-04-27T16:00:00.000Z"
+    }
+  ]
+}
