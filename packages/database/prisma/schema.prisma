@@ -1,0 +1,54 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model WorkflowExecution {
+  id        String   @id
+  state     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  steps     WorkflowStep[]
+  events    OrchestrationEvent[]
+}
+
+model WorkflowStep {
+  id          String            @id
+  workflowId  String
+  name        String
+  state       String
+  attempt     Int               @default(0)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  workflow    WorkflowExecution @relation(fields: [workflowId], references: [id])
+
+  @@index([workflowId])
+}
+
+model OrchestrationEvent {
+  id         String            @id
+  workflowId String
+  stepId     String?
+  type       String
+  payload    Json
+  occurredAt DateTime
+  workflow   WorkflowExecution @relation(fields: [workflowId], references: [id])
+
+  @@index([workflowId, occurredAt])
+}
+
+model ExecutionLog {
+  id            String   @id
+  workflowId    String
+  correlationId String
+  level         String
+  message       String
+  metadata      Json?
+  createdAt     DateTime @default(now())
+
+  @@index([workflowId, createdAt])
+}

@@ -2,8 +2,10 @@ packages:
   - 'apps/*'
   - 'packages/*'
 onlyBuiltDependencies:
+  - msgpackr-extract
   - sharp
   - unrs-resolver
 allowBuilds:
+  msgpackr-extract: true
   sharp: true
   unrs-resolver: true
