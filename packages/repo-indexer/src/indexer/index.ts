@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto'
+import path from 'node:path'
 
-import { and, desc, eq } from 'drizzle-orm'
+import { and, desc, eq, sql } from 'drizzle-orm'
 
 import { chunkParsedFile } from '../chunker'
-import { createDeterministicEmbedding, embedChunks } from '../embedder'
+import { createDeterministicEmbedding, createEmbeddingProvider, embedChunks } from '../embedder'
 import { extractFileMetadata } from '../extractor'
 import { parseRepository } from '../parser'
 import { selectChunksWithinBudget } from '../retrieval'
@@ -25,8 +26,10 @@ import type {
   PersistIndexedFileInput,
   PersistIndexedFileResult,
   RepoIndexStore,
+  StoredDependencyEdge,
   StoredIndexedFile,
   StoredRepoChunk,
+  StoredRepoSymbol,
 } from '../types'
 
 const defaultIndexingBudget = {
@@ -39,6 +42,7 @@ export async function indexRepository(
   store: RepoIndexStore,
 ): Promise<IndexingResult> {
   const parsedFiles = await parseRepository(request)
+  const embeddingProvider = createEmbeddingProvider()
   const files: IndexedFileResult[] = []
   let filesIndexed = 0
   let filesSkipped = 0
@@ -84,8 +88,12 @@ export async function indexRepository(
       continue
     }
 
+    const metadata = extractFileMetadata(file)
     const selectedChunks = selectChunksWithinBudget(
-      chunkParsedFile(file).map((chunk) => ({
+      chunkParsedFile(file, {
+        maxChunkTokens: request.maxChunkTokens ?? 800,
+        overlapTokens: request.overlapTokens ?? 80,
+      }, metadata.symbols).map((chunk) => ({
         chunk: {
           id: `${file.filePath}:${chunk.chunkIndex}`,
           fileId: file.filePath,
@@ -119,17 +127,17 @@ export async function indexRepository(
       continue
     }
 
-    const metadata = extractFileMetadata(file)
-    const chunks = embedChunks(
+    const chunks = await embedChunks(
       selectedChunks.map((chunk) => ({
         chunkIndex: chunk.chunkIndex,
-        chunkType: 'file',
+        chunkType: chunk.chunkType === 'symbol' ? 'symbol' : 'file',
         symbolName: chunk.symbolName ?? undefined,
         content: chunk.content,
         startLine: chunk.startLine ?? 1,
         endLine: chunk.endLine ?? 1,
         tokenCount: chunk.tokenCount,
       })),
+      embeddingProvider,
     )
     const persisted = await store.persistIndexedFile({
       file,
@@ -166,6 +174,8 @@ export async function indexRepository(
 export class InMemoryRepoIndexStore implements RepoIndexStore {
   private readonly files = new Map<string, StoredIndexedFile>()
   private readonly chunks = new Map<string, StoredRepoChunk[]>()
+  private readonly symbols = new Map<string, StoredRepoSymbol[]>()
+  private readonly imports = new Map<string, StoredDependencyEdge[]>()
 
   async getFileByPath(input: {
     projectId: string
@@ -211,6 +221,31 @@ export class InMemoryRepoIndexStore implements RepoIndexStore {
         embedding: chunk.embedding,
       })),
     )
+    this.symbols.set(
+      fileId,
+      input.symbols.map((symbol) => ({
+        id: randomUUID(),
+        fileId,
+        filePath: input.file.filePath,
+        name: symbol.name,
+        kind: symbol.kind,
+        isExported: symbol.isExported,
+        isDefaultExport: symbol.isDefaultExport,
+        chunkId: null,
+      })),
+    )
+    this.imports.set(
+      fileId,
+      input.imports.map((item) => ({
+        sourceFileId: fileId,
+        sourceFilePath: input.file.filePath,
+        resolvedFileId: null,
+        resolvedFilePath: resolveImportPath(input.file.filePath, item.importSpecifier),
+        importSpecifier: item.importSpecifier,
+        isExternal: item.isExternal,
+        importedNames: item.importedNames,
+      })),
+    )
 
     return {
       fileId,
@@ -231,6 +266,54 @@ export class InMemoryRepoIndexStore implements RepoIndexStore {
 
       return left.chunkIndex - right.chunkIndex
     })
+  }
+
+  async listSymbols(projectId: string): Promise<StoredRepoSymbol[]> {
+    const fileIds = [...this.files.values()]
+      .filter((file) => file.projectId === projectId)
+      .map((file) => file.id)
+
+    return fileIds.flatMap((fileId) => this.symbols.get(fileId) ?? [])
+  }
+
+  async listDependencyEdges(projectId: string): Promise<StoredDependencyEdge[]> {
+    const files = [...this.files.values()].filter(
+      (file) => file.projectId === projectId,
+    )
+    const byPath = new Map(files.map((file) => [file.filePath, file]))
+
+    return files.flatMap((file) =>
+      (this.imports.get(file.id) ?? []).map((edge) => {
+        const resolvedPath = importPathCandidates(
+          edge.sourceFilePath,
+          edge.importSpecifier ?? '',
+        ).find((candidate) => byPath.has(candidate))
+        const resolvedFile = resolvedPath ? byPath.get(resolvedPath) : undefined
+        return {
+          ...edge,
+          resolvedFileId: resolvedFile?.id ?? null,
+          resolvedFilePath: resolvedFile?.filePath ?? edge.resolvedFilePath,
+        }
+      }),
+    )
+  }
+
+  async semanticSearchChunks(
+    projectId: string,
+    embedding: number[],
+    limit: number,
+  ) {
+    const chunks = await this.listChunks(projectId)
+
+    return chunks
+      .map((chunk) => ({
+        chunk,
+        score: chunk.embedding
+          ? cosineSimilarityLocal(embedding, chunk.embedding)
+          : 0,
+      }))
+      .sort((left, right) => right.score - left.score)
+      .slice(0, limit)
   }
 }
 
@@ -339,6 +422,104 @@ export function createDrizzleRepoIndexStore(
           return left.chunkIndex - right.chunkIndex
         })
     },
+
+    async listSymbols(projectId) {
+      const rows = await db
+        .select({
+          id: repoIndexSymbols.id,
+          fileId: repoIndexSymbols.fileId,
+          filePath: repoIndexFiles.filePath,
+          name: repoIndexSymbols.name,
+          kind: repoIndexSymbols.kind,
+          isExported: repoIndexSymbols.isExported,
+          isDefaultExport: repoIndexSymbols.isDefaultExport,
+          chunkId: repoIndexSymbols.chunkId,
+        })
+        .from(repoIndexSymbols)
+        .innerJoin(repoIndexFiles, eq(repoIndexSymbols.fileId, repoIndexFiles.id))
+        .where(eq(repoIndexFiles.projectId, projectId))
+
+      return rows
+    },
+
+    async listDependencyEdges(projectId) {
+      const rows = await db
+        .select({
+          sourceFileId: repoIndexImports.sourceFileId,
+          sourceFilePath: repoIndexFiles.filePath,
+          resolvedFileId: repoIndexImports.resolvedFileId,
+          importSpecifier: repoIndexImports.importSpecifier,
+          isExternal: repoIndexImports.isExternal,
+          importedNames: repoIndexImports.importedNames,
+        })
+        .from(repoIndexImports)
+        .innerJoin(
+          repoIndexFiles,
+          eq(repoIndexImports.sourceFileId, repoIndexFiles.id),
+        )
+        .where(eq(repoIndexFiles.projectId, projectId))
+
+      const projectFiles = await db
+        .select({
+          id: repoIndexFiles.id,
+          filePath: repoIndexFiles.filePath,
+        })
+        .from(repoIndexFiles)
+        .where(eq(repoIndexFiles.projectId, projectId))
+      const filePathById = new Map(projectFiles.map((file) => [file.id, file.filePath]))
+
+      return rows.map((row) => ({
+        ...row,
+        resolvedFilePath: row.resolvedFileId
+          ? filePathById.get(row.resolvedFileId) ?? null
+          : null,
+      }))
+    },
+
+    async semanticSearchChunks(projectId, embedding, limit) {
+      const vector = `[${embedding.join(',')}]`
+      const distance = sql<number>`${repoIndexChunks.embedding} <=> ${vector}::vector`
+      const rows = await db
+        .select({
+          id: repoIndexChunks.id,
+          fileId: repoIndexChunks.fileId,
+          filePath: repoIndexFiles.filePath,
+          chunkIndex: repoIndexChunks.chunkIndex,
+          chunkType: repoIndexChunks.chunkType,
+          symbolName: repoIndexChunks.symbolName,
+          content: repoIndexChunks.content,
+          startLine: repoIndexChunks.startLine,
+          endLine: repoIndexChunks.endLine,
+          tokenCount: repoIndexChunks.tokenCount,
+          embedding: repoIndexChunks.embedding,
+          distance,
+        })
+        .from(repoIndexChunks)
+        .innerJoin(
+          repoIndexFiles,
+          eq(repoIndexChunks.fileId, repoIndexFiles.id),
+        )
+        .where(eq(repoIndexFiles.projectId, projectId))
+        .orderBy(distance)
+        .limit(limit)
+
+      return rows.map((row) => ({
+        chunk: {
+          id: row.id,
+          fileId: row.fileId,
+          filePath: row.filePath,
+          chunkIndex: row.chunkIndex ?? 0,
+          chunkType: row.chunkType,
+          symbolName: row.symbolName,
+          content: row.content,
+          startLine: row.startLine,
+          endLine: row.endLine,
+          tokenCount: row.tokenCount ?? 0,
+          embedding: row.embedding,
+        },
+        score: 1 - Number(row.distance ?? 1),
+      }))
+    },
   }
 }
 
@@ -393,10 +574,29 @@ async function replaceFileMetadata(
   }
 
   if (input.imports.length > 0) {
+    const projectFiles = await db
+      .select({
+        id: repoIndexFiles.id,
+        filePath: repoIndexFiles.filePath,
+      })
+      .from(repoIndexFiles)
+      .where(
+        and(
+          eq(repoIndexFiles.projectId, input.file.projectId),
+          eq(repoIndexFiles.repoPath, input.file.repoPath),
+        ),
+      )
+    const fileIdByPath = new Map(projectFiles.map((file) => [file.filePath, file.id]))
+
     await db.insert(repoIndexImports).values(
       input.imports.map((item) => ({
         sourceFileId: fileId,
         importSpecifier: item.importSpecifier,
+        resolvedFileId: findResolvedFileId(
+          fileIdByPath,
+          input.file.filePath,
+          item.importSpecifier,
+        ),
         isExternal: item.isExternal,
         importedNames: item.importedNames,
       })),
@@ -448,4 +648,70 @@ function fileKey(input: {
   filePath: string
 }): string {
   return `${input.projectId}:${input.repoPath}:${input.filePath}`
+}
+
+function resolveImportPath(
+  sourceFilePath: string,
+  importSpecifier: string,
+): string | null {
+  return importPathCandidates(sourceFilePath, importSpecifier)[0] ?? null
+}
+
+function findResolvedFileId(
+  fileIdByPath: Map<string, string>,
+  sourceFilePath: string,
+  importSpecifier: string,
+): string | null {
+  for (const candidate of importPathCandidates(sourceFilePath, importSpecifier)) {
+    const fileId = fileIdByPath.get(candidate)
+    if (fileId) {
+      return fileId
+    }
+  }
+
+  return null
+}
+
+function importPathCandidates(
+  sourceFilePath: string,
+  importSpecifier: string,
+): string[] {
+  if (!importSpecifier.startsWith('.')) {
+    return []
+  }
+
+  const sourceDirectory = path.posix.dirname(sourceFilePath)
+  const basePath = path.posix.normalize(path.posix.join(sourceDirectory, importSpecifier))
+  const extension = path.posix.extname(basePath)
+  return extension
+    ? [basePath]
+    : [
+        basePath,
+        `${basePath}.ts`,
+        `${basePath}.tsx`,
+        `${basePath}.js`,
+        `${basePath}.jsx`,
+        path.posix.join(basePath, 'index.ts'),
+        path.posix.join(basePath, 'index.tsx'),
+        path.posix.join(basePath, 'index.js'),
+        path.posix.join(basePath, 'index.jsx'),
+      ]
+}
+
+function cosineSimilarityLocal(left: number[], right: number[]): number {
+  let dot = 0
+  let leftMagnitude = 0
+  let rightMagnitude = 0
+
+  for (let index = 0; index < Math.min(left.length, right.length); index += 1) {
+    dot += left[index] * right[index]
+    leftMagnitude += left[index] ** 2
+    rightMagnitude += right[index] ** 2
+  }
+
+  if (leftMagnitude === 0 || rightMagnitude === 0) {
+    return 0
+  }
+
+  return dot / (Math.sqrt(leftMagnitude) * Math.sqrt(rightMagnitude))
 }

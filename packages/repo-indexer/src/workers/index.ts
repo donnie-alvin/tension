@@ -1,6 +1,8 @@
 import { setTimeout as delay } from 'node:timers/promises'
 
 import { isCancellationRequested } from '@traycer/queue'
+import { Worker, type Job } from 'bullmq'
+import IORedis from 'ioredis'
 
 import type { FileIndexingQueue, IndexingJob } from '../api'
 import { indexRepository } from '../indexer'
@@ -20,6 +22,12 @@ export interface RunIndexingWorkerOptions extends ProcessNextIndexingJobOptions 
   once?: boolean
   signal?: AbortSignal
   onResult?: (result: IndexingResult) => void
+}
+
+export interface RunBullMQIndexingWorkerOptions extends ProcessIndexingJobOptions {
+  queueName?: string
+  redisUrl?: string
+  concurrency?: number
 }
 
 export async function processIndexingJob(
@@ -92,4 +100,56 @@ export async function runIndexingWorker(
       },
     )
   }
+}
+
+export function createBullMQIndexingWorker(
+  options: RunBullMQIndexingWorkerOptions,
+): Worker {
+  const connection = new IORedis(
+    options.redisUrl ?? process.env.REDIS_URL ?? 'redis://127.0.0.1:6379',
+    { maxRetriesPerRequest: null },
+  )
+
+  const worker = new Worker(
+    options.queueName ?? 'repo-indexing',
+    async (job: Job<IndexingJob['request']>) => {
+      await job.updateProgress({ phase: 'indexing', filesIndexed: 0 })
+      const result = await processIndexingJob(
+        {
+          jobId: job.id ?? String(job.name),
+          request: job.data,
+          status: 'processing',
+          attempts: job.attemptsMade + 1,
+          maxAttempts: job.opts.attempts ?? 3,
+          enqueuedAt: new Date(job.timestamp).toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+        options,
+      )
+      await job.updateProgress({
+        phase: 'completed',
+        filesIndexed: result.filesIndexed,
+        filesSkipped: result.filesSkipped,
+        chunksIndexed: result.chunksIndexed,
+      })
+      return result
+    },
+    {
+      connection,
+      concurrency: options.concurrency ?? 2,
+      lockDuration: 120_000,
+      stalledInterval: 30_000,
+    },
+  )
+
+  worker.on('closed', () => connection.disconnect())
+  worker.on('failed', (job, error) => {
+    process.stderr.write(
+      `repo-indexing job ${job?.id ?? 'unknown'} failed: ${
+        error instanceof Error ? error.message : String(error)
+      }\n`,
+    )
+  })
+
+  return worker
 }

@@ -9,6 +9,8 @@ import {
 } from 'node:fs/promises'
 import path from 'node:path'
 
+import { Queue } from 'bullmq'
+import IORedis from 'ioredis'
 import { z } from 'zod'
 
 import type { IndexingRequest } from '../types'
@@ -19,9 +21,13 @@ export const IndexingRequestSchema = z.object({
   workflowId: z.string().min(1).optional(),
   requestId: z.string().min(1).optional(),
   includeGlobs: z.array(z.string().min(1)).optional(),
+  excludeGlobs: z.array(z.string().min(1)).optional(),
+  languages: z.array(z.string().min(1)).optional(),
   maxFiles: z.number().int().min(1).max(10_000).optional(),
   maxChunks: z.number().int().min(1).max(100_000).optional(),
   maxTokens: z.number().int().min(1).max(10_000_000).optional(),
+  maxChunkTokens: z.number().int().min(64).max(20_000).optional(),
+  overlapTokens: z.number().int().min(0).max(5_000).optional(),
   force: z.boolean().optional(),
 })
 
@@ -46,6 +52,52 @@ export interface IndexingJobReceipt {
 
 export interface IndexingJobQueue {
   enqueue(request: IndexingRequest): Promise<IndexingJobReceipt>
+}
+
+export class BullMQIndexingQueue implements IndexingJobQueue {
+  readonly queue: Queue<IndexingRequest, unknown, string>
+  private readonly connection: IORedis
+
+  constructor(
+    options: {
+      queueName?: string
+      redisUrl?: string
+      maxAttempts?: number
+    } = {},
+  ) {
+    this.connection = new IORedis(
+      options.redisUrl ?? process.env.REDIS_URL ?? 'redis://127.0.0.1:6379',
+      { maxRetriesPerRequest: null },
+    )
+    this.queue = new Queue<IndexingRequest, unknown, string>(
+      options.queueName ?? 'repo-indexing',
+      {
+        connection: this.connection,
+        defaultJobOptions: {
+          attempts: options.maxAttempts ?? 3,
+          backoff: { type: 'exponential', delay: 2_000 },
+          removeOnComplete: 1_000,
+          removeOnFail: 5_000,
+        },
+      },
+    )
+  }
+
+  async enqueue(input: IndexingRequest): Promise<IndexingJobReceipt> {
+    const request = parseIndexingRequest(input)
+    const jobId = createIndexingJobId(request)
+    const job = await this.queue.add('index-repository', request, { jobId })
+
+    return {
+      jobId: job.id ?? jobId,
+      status: job.finishedOn ? 'completed' : 'queued',
+    }
+  }
+
+  async close(): Promise<void> {
+    await this.queue.close()
+    this.connection.disconnect()
+  }
 }
 
 export class FileIndexingQueue implements IndexingJobQueue {

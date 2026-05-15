@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto'
-import { readdir, readFile, stat } from 'node:fs/promises'
+import { readFile, readdir, stat } from 'node:fs/promises'
 import path from 'node:path'
+
+import ignore from 'ignore'
 
 import type { IndexingRequest, ParsedFile } from '../types'
 
@@ -13,32 +15,35 @@ const skippedDirectories = new Set([
   'dist',
   'logs',
   'node_modules',
+  'target',
+  'vendor',
 ])
 
-const defaultExtensions = new Set([
-  '.c',
-  '.cpp',
-  '.cs',
-  '.css',
-  '.go',
-  '.h',
-  '.hpp',
-  '.html',
-  '.java',
-  '.js',
-  '.jsx',
-  '.json',
-  '.kt',
-  '.md',
-  '.mjs',
-  '.py',
-  '.rs',
-  '.sh',
-  '.sql',
-  '.ts',
-  '.tsx',
-  '.yaml',
-  '.yml',
+const extensionLanguage = new Map<string, string>([
+  ['.c', 'c'],
+  ['.cc', 'cpp'],
+  ['.cpp', 'cpp'],
+  ['.cs', 'csharp'],
+  ['.css', 'css'],
+  ['.go', 'go'],
+  ['.h', 'c'],
+  ['.hpp', 'cpp'],
+  ['.html', 'html'],
+  ['.java', 'java'],
+  ['.js', 'javascript'],
+  ['.jsx', 'javascript'],
+  ['.json', 'json'],
+  ['.kt', 'kotlin'],
+  ['.md', 'markdown'],
+  ['.mjs', 'javascript'],
+  ['.py', 'python'],
+  ['.rs', 'rust'],
+  ['.sh', 'shell'],
+  ['.sql', 'sql'],
+  ['.ts', 'typescript'],
+  ['.tsx', 'typescript'],
+  ['.yaml', 'yaml'],
+  ['.yml', 'yaml'],
 ])
 
 const maxReadableFileBytes = 1_000_000
@@ -49,9 +54,10 @@ export async function parseRepository(
   const repoPath = path.resolve(request.repoPath)
   const files = await discoverRepositoryFiles(repoPath, {
     includeGlobs: request.includeGlobs,
-    maxFiles: request.maxFiles ?? 200,
+    excludeGlobs: request.excludeGlobs,
+    languages: request.languages,
+    maxFiles: request.maxFiles ?? 2_000,
   })
-
   const parsedFiles: ParsedFile[] = []
 
   for (const absolutePath of files) {
@@ -77,7 +83,7 @@ export async function parseRepository(
       language: detectLanguage(filePath),
       content,
       contentHash: hashContent(content),
-      lineCount: content.length === 0 ? 0 : content.split(/\r?\n/).length,
+      lineCount: content.length === 0 ? 0 : content.split(/\r?\n/u).length,
     })
   }
 
@@ -86,15 +92,33 @@ export async function parseRepository(
 
 export async function discoverRepositoryFiles(
   repoPath: string,
-  options: { includeGlobs?: string[]; maxFiles: number },
+  options: {
+    includeGlobs?: string[]
+    excludeGlobs?: string[]
+    languages?: string[]
+    maxFiles: number
+  },
 ): Promise<string[]> {
+  const root = path.resolve(repoPath)
   const discovered: string[] = []
+  const includeMatcher = ignore().add(options.includeGlobs ?? ['**/*'])
+  const excludeMatcher = ignore().add(options.excludeGlobs ?? [])
+  const languageFilter = new Set(options.languages ?? [])
+  const rootIgnore = ignore().add(await readGitignore(path.join(root, '.gitignore')))
 
-  async function visit(directoryPath: string): Promise<void> {
+  async function visit(directoryPath: string, inheritedIgnores: string[]): Promise<void> {
     if (discovered.length >= options.maxFiles) {
       return
     }
 
+    const relativeDirectory = toRepoRelativePath(root, directoryPath)
+    const localGitignore = await readGitignore(path.join(directoryPath, '.gitignore'))
+    const localPrefix = relativeDirectory ? `${relativeDirectory}/` : ''
+    const activeIgnores = [
+      ...inheritedIgnores,
+      ...localGitignore.map((pattern) => `${localPrefix}${pattern}`),
+    ]
+    const matcher = ignore().add(activeIgnores)
     const entries = await readdir(directoryPath, { withFileTypes: true })
 
     for (const entry of entries.sort((left, right) =>
@@ -105,12 +129,16 @@ export async function discoverRepositoryFiles(
       }
 
       const absolutePath = path.join(directoryPath, entry.name)
+      const relativePath = toRepoRelativePath(root, absolutePath)
+
+      if (rootIgnore.ignores(relativePath) || matcher.ignores(relativePath)) {
+        continue
+      }
 
       if (entry.isDirectory()) {
         if (!skippedDirectories.has(entry.name)) {
-          await visit(absolutePath)
+          await visit(absolutePath, activeIgnores)
         }
-
         continue
       }
 
@@ -118,15 +146,26 @@ export async function discoverRepositoryFiles(
         continue
       }
 
-      const relativePath = toRepoRelativePath(repoPath, absolutePath)
+      const language = detectLanguage(relativePath)
+      if (
+        languageFilter.size > 0 &&
+        !languageFilter.has(language) &&
+        !languageFilter.has(path.extname(relativePath).slice(1))
+      ) {
+        continue
+      }
 
-      if (shouldIncludeFile(relativePath, options.includeGlobs)) {
+      if (
+        extensionLanguage.has(path.extname(relativePath).toLowerCase()) &&
+        includeMatcher.ignores(relativePath) &&
+        !excludeMatcher.ignores(relativePath)
+      ) {
         discovered.push(absolutePath)
       }
     }
   }
 
-  await visit(repoPath)
+  await visit(root, await readGitignore(path.join(root, '.gitignore')))
 
   return discovered
 }
@@ -136,56 +175,21 @@ export function hashContent(content: string): string {
 }
 
 export function detectLanguage(filePath: string): string {
-  const extension = path.extname(filePath).toLowerCase()
-
-  switch (extension) {
-    case '.ts':
-    case '.tsx':
-      return 'typescript'
-    case '.js':
-    case '.jsx':
-    case '.mjs':
-      return 'javascript'
-    case '.md':
-      return 'markdown'
-    case '.json':
-      return 'json'
-    case '.yml':
-    case '.yaml':
-      return 'yaml'
-    default:
-      return extension.replace('.', '') || 'text'
-  }
+  return extensionLanguage.get(path.extname(filePath).toLowerCase()) ?? 'text'
 }
 
-function shouldIncludeFile(filePath: string, includeGlobs?: string[]): boolean {
-  if (includeGlobs && includeGlobs.length > 0) {
-    return includeGlobs.some((glob) => matchesSimpleGlob(filePath, glob))
-  }
-
-  return defaultExtensions.has(path.extname(filePath).toLowerCase())
-}
-
-function matchesSimpleGlob(filePath: string, glob: string): boolean {
-  const normalizedGlob = glob.replaceAll('\\', '/')
-
-  if (normalizedGlob === '**/*') {
-    return true
-  }
-
-  if (normalizedGlob.startsWith('**/*.')) {
-    return filePath.endsWith(normalizedGlob.slice(4))
-  }
-
-  if (normalizedGlob.startsWith('*.')) {
-    return path.basename(filePath).endsWith(normalizedGlob.slice(1))
-  }
-
-  return (
-    filePath === normalizedGlob || filePath.startsWith(`${normalizedGlob}/`)
-  )
+async function readGitignore(filePath: string): Promise<string[]> {
+  return readFile(filePath, 'utf8')
+    .then((content) =>
+      content
+        .split(/\r?\n/u)
+        .map((line) => line.trim())
+        .filter((line) => line && !line.startsWith('#')),
+    )
+    .catch(() => [])
 }
 
 function toRepoRelativePath(repoPath: string, absolutePath: string): string {
-  return path.relative(repoPath, absolutePath).replaceAll(path.sep, '/')
+  const relativePath = path.relative(repoPath, absolutePath).replaceAll(path.sep, '/')
+  return relativePath === '' ? '' : relativePath
 }

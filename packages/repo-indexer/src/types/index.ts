@@ -6,9 +6,13 @@ export interface IndexingRequest {
   workflowId?: string
   requestId?: string
   includeGlobs?: string[]
+  excludeGlobs?: string[]
+  languages?: string[]
   maxFiles?: number
   maxChunks?: number
   maxTokens?: number
+  maxChunkTokens?: number
+  overlapTokens?: number
   force?: boolean
 }
 
@@ -43,6 +47,7 @@ export interface ExtractedSymbol {
   isExported: boolean
   isDefaultExport: boolean
   line: number
+  endLine?: number
 }
 
 export interface ExtractedImport {
@@ -82,6 +87,27 @@ export interface StoredRepoChunk {
   embedding?: number[] | null
 }
 
+export interface StoredRepoSymbol {
+  id: string
+  fileId: string
+  filePath: string
+  name: string | null
+  kind: string | null
+  isExported: boolean | null
+  isDefaultExport: boolean | null
+  chunkId: string | null
+}
+
+export interface StoredDependencyEdge {
+  sourceFileId: string
+  sourceFilePath: string
+  resolvedFileId: string | null
+  resolvedFilePath: string | null
+  importSpecifier: string | null
+  isExternal: boolean | null
+  importedNames: string[] | null
+}
+
 export interface PersistIndexedFileInput {
   file: ParsedFile
   chunks: EmbeddedRepoChunk[]
@@ -105,6 +131,13 @@ export interface RepoIndexStore {
     input: PersistIndexedFileInput,
   ): Promise<PersistIndexedFileResult>
   listChunks(projectId: string): Promise<StoredRepoChunk[]>
+  listSymbols(projectId: string): Promise<StoredRepoSymbol[]>
+  listDependencyEdges(projectId: string): Promise<StoredDependencyEdge[]>
+  semanticSearchChunks?(
+    projectId: string,
+    embedding: number[],
+    limit: number,
+  ): Promise<RetrievalCandidate[]>
 }
 
 export interface IndexedFileResult {

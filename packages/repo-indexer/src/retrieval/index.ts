@@ -1,4 +1,10 @@
 import { estimateTokenCount } from '../chunker'
+import {
+  cosineSimilarity,
+  createEmbeddingProvider,
+  createDeterministicEmbedding,
+  embedTexts,
+} from '../embedder'
 import type {
   RepoIndexStore,
   RetrievalBudget,
@@ -58,30 +64,89 @@ export async function retrieveIndexedChunks(
     projectId: string
     query: string
     budget?: RetrievalBudget
+    dependencyExpansion?: number
   },
 ): Promise<RetrievalResult> {
-  const queryTerms = input.query.toLowerCase().split(/\W+/u).filter(Boolean)
-  const chunks = await store.listChunks(input.projectId)
-  const candidates = chunks.map((chunk) => ({
-    chunk,
-    score: scoreChunk(chunk, queryTerms),
-  }))
+  const symbols = await store.listSymbols(input.projectId)
+  const edges = await store.listDependencyEdges(input.projectId)
+  const provider = createEmbeddingProvider()
+  const [queryEmbedding] = await embedTexts([input.query], provider).catch(() => [
+    createDeterministicEmbedding(input.query),
+  ])
+  const queryTerms = tokenize(input.query)
+  const symbolNames = new Set(
+    symbols
+      .filter((symbol) => symbol.name && queryTerms.includes(symbol.name.toLowerCase()))
+      .map((symbol) => symbol.name?.toLowerCase()),
+  )
+  const dependencyBoosts = dependencyBoostByFile(edges, input.dependencyExpansion ?? 1)
+  const semanticCandidates = store.semanticSearchChunks
+    ? await store.semanticSearchChunks(
+        input.projectId,
+        queryEmbedding,
+        Math.max((input.budget ?? defaultRetrievalBudget).maxChunks * 8, 50),
+      )
+    : undefined
+  const chunks = semanticCandidates
+    ? semanticCandidates.map((candidate) => candidate.chunk)
+    : await store.listChunks(input.projectId)
+  const semanticScoreByChunkId = new Map(
+    semanticCandidates?.map((candidate) => [candidate.chunk.id, candidate.score]) ??
+      [],
+  )
+
+  const candidates = chunks.map((chunk) => {
+    const semanticScore =
+      semanticScoreByChunkId.get(chunk.id) ??
+      (chunk.embedding ? cosineSimilarity(queryEmbedding, chunk.embedding) : 0)
+    const lexicalScore = lexicalOverlapScore(chunk, queryTerms)
+    const symbolScore =
+      chunk.symbolName && symbolNames.has(chunk.symbolName.toLowerCase()) ? 0.35 : 0
+    const dependencyScore = dependencyBoosts.get(chunk.filePath) ?? 0
+
+    return {
+      chunk,
+      score: semanticScore * 0.55 + lexicalScore * 0.3 + symbolScore + dependencyScore,
+    }
+  })
 
   return selectChunksWithinBudget(candidates, input.budget)
 }
 
-function scoreChunk(chunk: StoredRepoChunk, queryTerms: string[]): number {
-  const haystack =
-    `${chunk.filePath}\n${chunk.symbolName ?? ''}\n${chunk.content}`
-      .toLowerCase()
-      .trim()
-
+function lexicalOverlapScore(chunk: StoredRepoChunk, queryTerms: string[]): number {
   if (queryTerms.length === 0) {
     return 0
   }
 
-  return queryTerms.reduce(
-    (score, term) => score + (haystack.includes(term) ? 1 : 0),
-    0,
+  const haystack = tokenize(
+    `${chunk.filePath} ${chunk.symbolName ?? ''} ${chunk.content}`,
   )
+  const haystackSet = new Set(haystack)
+  const matches = queryTerms.filter((term) => haystackSet.has(term)).length
+
+  return matches / queryTerms.length
+}
+
+function dependencyBoostByFile(
+  edges: Awaited<ReturnType<RepoIndexStore['listDependencyEdges']>>,
+  expansion: number,
+): Map<string, number> {
+  const boosts = new Map<string, number>()
+
+  if (expansion < 1) {
+    return boosts
+  }
+
+  for (const edge of edges) {
+    if (edge.resolvedFilePath) {
+      boosts.set(edge.sourceFilePath, Math.max(boosts.get(edge.sourceFilePath) ?? 0, 0.08))
+      boosts.set(edge.resolvedFilePath, Math.max(boosts.get(edge.resolvedFilePath) ?? 0, 0.05))
+    }
+  }
+
+  return boosts
+}
+
+function tokenize(input: string): string[] {
+  return input.toLowerCase().match(/[a-z0-9_$]+/gu) ?? []
 }
