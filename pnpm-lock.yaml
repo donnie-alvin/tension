@@ -8,12 +8,27 @@ importers:
 
   .:
     devDependencies:
+      '@eslint/js':
+        specifier: ^9.0.0
+        version: 9.39.4
+      '@types/node':
+        specifier: ^22.19.18
+        version: 22.19.18
+      '@typescript-eslint/eslint-plugin':
+        specifier: ^8.59.2
+        version: 8.59.2(@typescript-eslint/parser@8.59.2(eslint@9.39.4(jiti@2.7.0))(typescript@5.9.3))(eslint@9.39.4(jiti@2.7.0))(typescript@5.9.3)
+      '@typescript-eslint/parser':
+        specifier: ^8.59.2
+        version: 8.59.2(eslint@9.39.4(jiti@2.7.0))(typescript@5.9.3)
       eslint:
         specifier: ^9.0.0
         version: 9.39.4(jiti@2.7.0)
       prettier:
         specifier: ^3.3.0
         version: 3.8.3
+      tsx:
+        specifier: ^4.0.0
+        version: 4.21.0
       turbo:
         specifier: ^2.0.0
         version: 2.9.12
@@ -23,10 +38,16 @@ importers:
 
   apps/api:
     dependencies:
+      '@traycer/repo-indexer':
+        specifier: workspace:*
+        version: link:../../packages/repo-indexer
       '@traycer/shared':
         specifier: workspace:*
         version: link:../../packages/shared
     devDependencies:
+      '@types/node':
+        specifier: ^22.19.18
+        version: 22.19.18
       typescript:
         specifier: ^5.6.0
         version: 5.9.3
@@ -175,10 +196,16 @@ importers:
       '@traycer/queue':
         specifier: workspace:*
         version: link:../../packages/queue
+      '@traycer/repo-indexer':
+        specifier: workspace:*
+        version: link:../../packages/repo-indexer
       '@traycer/shared':
         specifier: workspace:*
         version: link:../../packages/shared
     devDependencies:
+      '@types/node':
+        specifier: ^22.19.18
+        version: 22.19.18
       typescript:
         specifier: ^5.6.0
         version: 5.9.3
@@ -201,6 +228,9 @@ importers:
         specifier: workspace:*
         version: link:../shared
     devDependencies:
+      '@types/node':
+        specifier: ^22.19.18
+        version: 22.19.18
       typescript:
         specifier: ^5.6.0
         version: 5.9.3
@@ -223,12 +253,18 @@ importers:
         specifier: ^5.0.0
         version: 5.10.1
     devDependencies:
+      '@types/node':
+        specifier: ^22.19.18
+        version: 22.19.18
       typescript:
         specifier: ^5.6.0
         version: 5.9.3
 
   packages/repo-indexer:
     dependencies:
+      '@traycer/queue':
+        specifier: workspace:*
+        version: link:../queue
       bullmq:
         specifier: ^5.0.0
         version: 5.76.7

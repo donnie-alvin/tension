@@ -1,3 +1,7 @@
-export * from "./schema";
-export { createRepoIndexerDb, createRepoIndexerPool, db, pool } from "./client";
-export type { RepoIndexerDbClient } from "./client";
+export * from './schema'
+export {
+  createRepoIndexerDatabase,
+  createRepoIndexerDb,
+  createRepoIndexerPool,
+} from './client'
+export type { RepoIndexerDatabaseRuntime, RepoIndexerDbClient } from './client'

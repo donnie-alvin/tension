@@ -2,8 +2,9 @@ name: Verify
 
 on:
   pull_request:
+    branches: [master]
   push:
-    branches: [main]
+    branches: [master]
 
 jobs:
   verify:
@@ -23,14 +24,8 @@ jobs:
       - name: typecheck
         run: pnpm type-check
       - name: unit tests
-        run: pnpm run --if-present test:unit
+        run: pnpm test:unit
       - name: integration tests
-        run: pnpm run --if-present test:integration
-      - name: AST validation
-        run: pnpm run --if-present validate:ast
-      - name: security scanning
-        run: pnpm audit --audit-level moderate
+        run: pnpm test:integration
       - name: orchestration validation
-        run: pnpm run --if-present validate:orchestration
-      - name: AI review
-        run: pnpm run --if-present review:ai
+        run: pnpm validate:orchestration

@@ -13,6 +13,7 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
+    "@traycer/queue": "workspace:*",
     "bullmq": "^5.0.0",
     "drizzle-kit": "^0.31.0",
     "drizzle-orm": "^0.44.0",
